@@ -5,3 +5,7 @@ from .level import DoseLevel
 from .reading import PressureReading
 from .run import MonotoneRun
 from .note import ValidationNote
+from .log_volume import LogVolume
+from .log_chunk import LogChunk
+from .log_quarantine import LogQuarantine
+from .log_ingest import LogIngest

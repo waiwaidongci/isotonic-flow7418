@@ -20,9 +20,9 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 |账号 / 密码|页面、权限|典型动作|
 |---|---|---|
-|admin@fangwen.demo / Fangwen2026!|六页、写入、审批|批准或退回独立复验计划|
-|analyst@fangwen.demo / Fangwen2026!|六页、底稿/配置/说明写入|导入独立滤片、修订、排队、提交说明；审批403|
-|viewer@fangwen.demo / Fangwen2026!|六页只读、已批准CSV|核对结果并导出；所有写入403|
+|admin@fangwen.demo / Fangwen2026!|七页、写入、审批|批准或退回独立复验计划|
+|analyst@fangwen.demo / Fangwen2026!|七页、底稿/采集/配置/说明写入|导入独立滤片、修订、排队、提交说明；审批403|
+|viewer@fangwen.demo / Fangwen2026!|七页只读、已批准CSV|核对结果并导出；所有写入403|
 
 演示密码和 JWT_SECRET 仅供本地；部署须设置自己的值。`.env.example` 包括三个端口、POSTGRES_DB/USER/PASSWORD、JWT_SECRET、SEED_DEMO、RATE_LIMIT_WRITES（默认60）。首次启动也执行 seed，按自然键跳过已有记录，不覆盖用户改动。
 
@@ -39,6 +39,18 @@ Compose 恰好 frontend/backend/worker/db/redis 五服务，各自健康检查�
 7. 读每一折的留出流速、训练读数数、逐滤片残差；端点两折16片也计入总MSE，域内读数MSE另列0.51193266565。
 8. 到“独立复验”提出45 mL/min的新档取样，写明另取独立滤片、核对原始压差。说明冻结整份结果，不把拟合响应当下一档保证。
 9. 负责人许澜批准或退回，观察员叶衡下载批准快照 CSV；过程留痕记录导入、修订、队列、审批与导出。重复审批409，修改底稿不能改写既有批准快照。
+
+## 可恢复采集
+
+试验仪连续追加的分卷日志按行记录 `滤片编号,流速,压差[,说明]`（UTF-8，`\n` 结尾）。采集端按任意字节块上送，服务端以**卷身份 + 字节进度**接续，重启后从库中进度继续，不漏不重。
+
+- 卷以 `(volume_key, generation)` 登记并绑定研究，`identity` 为卷身份指纹；同名换卷必须升代次，同代身份不符即暂停该卷，防止拼错。
+- 每块携带 `base_offset` 与幂等 `chunk_id`：偏移与库中进度不符（截断或跳读）即暂停该卷并 409；崩溃后重发同一块返回原结果且不重复入库。
+- 跨块半条记录留在卷内 `pending` 待后续字节补齐；坏记录（列数、数值、有限性、量程、重复滤片编号）隔离进 `log_quarantine` 并保留原文，不阻断整卷。
+- 换卷后旧代卷仍可追加接完尾部；封存时卷尾未补齐的半条记录隔离留原文。恢复只允许回到不超过已存进度的位置，回退重采时原半条记录隔离。
+- 进度、档位（同流速自动合并建档）、滤片读数在同一事务生效；同研究采集按行锁串行，异常卷暂停不影响其他卷。采集读数就是普通底稿，拟合、LODO 与复验流程照常。
+
+接口：`GET/POST /collection/volumes`、`POST /collection/appends`、`POST /collection/volumes/{id}/seal|pause|resume`、`GET /collection/quarantine`、`GET /collection/ingest`。页面「采集恢复」可逐块追加日志、模拟换卷/截断/崩溃重发并核对入库、待补齐与隔离记录。写请求计入每分钟写配额。
 
 ## 数学口径
 
@@ -58,7 +70,7 @@ LODO 每次去掉一个独特流速的全部原始读数（包括所有同x命�
 
 每研究2–30命名档、至少2个不同流速，每档1–30读数，总计≤600；流速有限且0–1000，压差有限且0–1,000,000，查询≤30项。相同x合法并聚合；全同x、重复滤片编号、空档、非有限、负压差与错误方向拒绝。统一422错误不回显非法NaN输入，避免默认错误对象再次JSON编码失败。worker独立重验，历史坏任务标failed。
 
-78个有职责的 Python/TS/TSX/CSS 文件（不含空包、依赖和dist）。五实体 FlowStudy → DoseLevel → PressureReading → MonotoneRun → ValidationNote 贯穿 ORM/schema/service/routes、前端API/store和六页：响应总览、滤片与档位、拟合配置、曲线与留档、独立复验、过程留痕。
+88个有职责的 Python/TS/TSX/CSS 文件（不含空包、依赖和dist）。五实体 FlowStudy → DoseLevel → PressureReading → MonotoneRun → ValidationNote 贯穿 ORM/schema/service/routes、前端API/store和七页：响应总览、滤片与档位、采集恢复、拟合配置、曲线与留档、独立复验、过程留痕。采集侧另有 LogVolume/LogChunk/LogQuarantine/LogIngest 四表记录卷进度、幂等块台账、隔离原文与入库溯源。
 
 前端 `src/{api,stores,types,components/common,hooks,pages,router,utils,constants}`；后端 `src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}`，另 scripts/seed_demo.py 与 migrations/。共享组件 ResponsePlot、FitDigest、InverseSet、RunList 在多页复用，LodoTable与common组件提供一致解释；useTask/useRoute和format工具处理状态与格式。
 
@@ -71,6 +83,6 @@ Role、RunStatus、NoteStatus 后端位于 `backend/src/constants/enums.py`，�
 |队列|Celery5.4 / Kombu5.4.2 / Redis7，worker并发1|
 |数值|新写加权PAVA、线性插值/逆集合、逐整档重拟合LODO|
 
-本地前端：`cd frontend && npm ci && npm run dev`；`npm run build` 执行tsc与Vite。后端安装 requirements.txt，设置 DATABASE_URL/REDIS_URL/JWT_SECRET 后启动 uvicorn。当前以 SQLAlchemy metadata create_all 初始化，migrations 提供初始结构说明，未声称生产迁移链。许可证 MIT，见 LICENSE。
+本地前端：`cd frontend && npm ci && npm run dev`；`npm run build` 执行tsc与Vite。后端安装 requirements.txt，设置 DATABASE_URL/REDIS_URL/JWT_SECRET 后启动 uvicorn。当前以 SQLAlchemy metadata create_all 初始化，migrations 提供初始结构与采集表的说明，未声称生产迁移链。许可证 MIT，见 LICENSE。
 
 完整实际验收位于批次 `test-artifacts/gb-0028/TESTING.md`。关键 JSON、CSV、测试脚本、真实截图与原始日志都在该题证据目录，不进入源码。当前未验证外部真实滤材或生产压力；令牌/IP分钟配额不是完整生产抗滥用体系，登录更换令牌可获得新计数。Google字体断网时退回本地字体。输入数值上限与固定非降模型只服务本题研究范围，不是设备运行参数建议。

@@ -4,3 +4,6 @@ export type Level={id:number;study_id:number;label:string;flow:number};
 export type Reading={id:number;study_id:number;level_id:number;specimen_ref:string;pressure:number;measurement_note:string};
 export type Run={id:number;study_id:number;name:string;config:any;result:any;status:string;error?:string};
 export type Note={id:number;run_id:number;name:string;interpretation:string;next_step:string;proposed_flow:number;result_snapshot:any;status:string;review_note:string};
+export type Volume={id:number;study_id:number;volume_key:string;generation:number;identity:string;offset:number;lines:number;status:string;error?:string;pending_bytes:number;pending_preview:string;stored:number;quarantined:number;chunks:number;created_at:string;updated_at:string};
+export type Quarantine={id:number;volume_id:number;volume_key:string;generation:number;line_no?:number;raw:string;reason:string;created_at:string};
+export type Ingest={id:number;reading_id:number;volume_id:number;volume_key:string;generation:number;line_no:number;chunk_id:string;specimen_ref:string;pressure:number;flow:number;created_at:string};
